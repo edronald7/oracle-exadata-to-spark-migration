@@ -1,0 +1,13 @@
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+.venv/
+venv/
+spark-warehouse/
+metastore_db/
+*.log
+dist/
+build/

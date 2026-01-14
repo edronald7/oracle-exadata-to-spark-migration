@@ -1,0 +1,9 @@
+# Requirements para generadores de datos
+
+pyspark>=3.5.0,<4.0.0
+
+# Opcional: Delta Lake support
+delta-spark>=2.4.0,<3.0.0
+
+# Opcional: Iceberg support  
+# pyiceberg>=0.5.0

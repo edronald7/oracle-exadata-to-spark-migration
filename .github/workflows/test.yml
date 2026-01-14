@@ -1,0 +1,187 @@
+name: Test Spark Examples
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-pyspark:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyspark==3.5.0
+          pip install pytest pytest-cov
+          pip install -r data/generators/requirements.txt
+      
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          # Stop build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.git,__pycache__,build,dist
+          # Exit-zero treats all errors as warnings
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=.git,__pycache__,build,dist
+      
+      - name: Generate test data
+        run: |
+          cd data/generators
+          python generate_all.py --size small --output ../../testdata --format parquet
+      
+      - name: Test PySpark scripts
+        run: |
+          # Test generadores
+          pytest data/generators/tests/ -v --cov=data/generators --cov-report=xml
+          
+          # Test validation templates
+          pytest templates/pyspark/tests/ -v --cov=templates/pyspark --cov-report=xml
+      
+      - name: Test Case 01 - PySpark
+        run: |
+          cd cases/01-hints-parallel
+          spark-submit 3_pyspark.py --input-path ../../testdata --output-path ./test-output
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: pyspark
+          name: pyspark-coverage
+  
+  test-scala:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup JDK 11
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+      
+      - name: Setup Scala
+        uses: olafurpg/setup-scala@v14
+        with:
+          java-version: '11'
+      
+      - name: Cache sbt
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+          key: ${{ runner.os }}-sbt-${{ hashFiles('**/build.sbt') }}
+          restore-keys: |
+            ${{ runner.os }}-sbt-
+      
+      - name: Compile Scala code
+        run: |
+          # Si tienes build.sbt configurado
+          # sbt compile
+          echo "Scala compilation - pending build.sbt setup"
+      
+      - name: Run Scala tests
+        run: |
+          # sbt test
+          echo "Scala tests - pending setup"
+  
+  lint-sql:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install sqlfluff
+        run: |
+          pip install sqlfluff
+      
+      - name: Lint SQL files
+        run: |
+          sqlfluff lint cases/**/*.sql --dialect sparksql || true
+          # || true temporalmente hasta configurar .sqlfluff
+  
+  validate-docs:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          config-file: '.markdown-link-check.json'
+      
+      - name: Validate markdown format
+        run: |
+          npm install -g markdownlint-cli
+          markdownlint '**/*.md' --ignore node_modules --ignore .git || true
+  
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: [test-pyspark]
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install pyspark==3.5.0
+          pip install -r data/generators/requirements.txt
+      
+      - name: Full integration test
+        run: |
+          # Generar datos
+          cd data/generators
+          python generate_all.py --size small --output ../../testdata
+          
+          # Ejecutar múltiples casos
+          cd ../../cases
+          for case in 01-hints-parallel; do
+            echo "Testing case: $case"
+            cd $case
+            spark-submit 3_pyspark.py --input-path ../../testdata --output-path ./test-output
+            cd ..
+          done
+      
+      - name: Archive test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results
+          path: cases/*/test-output/
+          retention-days: 7
